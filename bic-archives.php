@@ -18,12 +18,13 @@ class BICArchives
 
   function __construct()
   {
-    add_shortcode('bic_archives', array(&$this, 'bic_archives'));
+    add_shortcode('bic_archives', array(&$this, 'get'));
     add_action('save_post', array(&$this, 'drop_cache'));
     add_action('edit_post', array(&$this, 'drop_cache'));
     add_action('delete_post', array(&$this, 'drop_cache'));
   }
   
+  // Singleton accesor
   static function instance()
   {
     static $instance = null;
@@ -32,14 +33,17 @@ class BICArchives
     return $instance;
   }
   
-  function bic_archives($atts)
+  // Top-level call which is the public interface for getting archive HTML.
+  function get($atts)
   {
     extract(shortcode_atts(array(
       'cat_ids' => null,
       'limit' => -1,
+      'dates' => true,
+      'comments' => true
       ), $atts));
 
-    $cache_id = $this->cache_id($cat_ids, $limit);
+    $cache_id = $this->cache_id($cat_ids, $limit, $dates, $comments);
     $cached = get_transient($cache_id);
     if ($cached)
     {
@@ -48,15 +52,51 @@ class BICArchives
     }
 
     $this->log("generating " . $cache_id);
-    $posts = $this->get_posts($cat_ids);
-    $html = $this->generate_html($posts);
+    $posts = $this->get_posts($cat_ids, $limit);
+    $html = $this->generate_html($posts, $dates, $comments);
     $this->store_cache($cache_id, $html);
     return $html;
   }
   
-  function generate_html($posts)
+  // Delete all the cached archives.  Generally called only by WordPress upon changing
+  // the post set.
+  function drop_cache()
   {
-    $html = "<ul class='bic_archives'>\n";
+    $this->log("deleting bic_archives");
+    $keys = get_transient(self::KEYS);
+    if (!$keys)
+      return;
+    array_walk($keys, array($this, 'drop_item'));
+    delete_transient(self::KEYS);
+  }
+  
+  
+  //
+  // Private methods
+  //
+  
+  private function generate_html($posts, $dates, $comments)
+  {
+    return $dates ? $this->generate_dated_html($posts, $comments) :
+      $this->generate_nondated_html($posts, $comments);
+  }
+  
+  private function generate_nondated_html($posts, $comments)
+  {
+    $html = "<ul class='bic_archives undated'>\n";
+    foreach ($posts as $post)
+    {
+      $html .= "<li><a href='" . get_permalink($post->ID) . "'>" . get_the_title($post->ID) . "</a>";
+      if ($comments)
+        $html .= "&nbsp;<span>(" . $post->comment_count . ")</span></li>\n";
+    }
+    $html .= "</ul>\n";
+    return $html;
+  }
+  
+  private function generate_dated_html($posts, $comments)
+  {
+    $html = "<ul class='bic_archives dated'>\n";
     $cur_month = null;
     $post_html = "";
     $num_posts = 0;
@@ -73,7 +113,8 @@ class BICArchives
       }
       $post_html .= "<li><em>" . mysql2date('d', $post->post_date) . ":</em> ";
       $post_html .= "<a href='" . get_permalink($post->ID) . "'>" . get_the_title($post->ID) . "</a>";
-      $post_html .= "&nbsp;<span>(" . $post->comment_count . ")</span></li>\n";
+      if ($comments)
+        $post_html .= "&nbsp;<span>(" . $post->comment_count . ")</span></li>\n";
       $num_posts += 1;
     }
     $html .= $this->generate_posts($month, $post_html, $num_posts);
@@ -81,7 +122,7 @@ class BICArchives
     return $html;
   }
   
-  function generate_posts($month, $post_html, $num_posts)
+  private function generate_posts($month, $post_html, $num_posts)
   {
     if ($num_posts == 0)
       return "";
@@ -92,7 +133,7 @@ class BICArchives
     return $res;
   }
   
-  function get_posts($cat_ids)
+  private function get_posts($cat_ids, $limit)
   {
     global $wpdb;
     
@@ -109,23 +150,26 @@ class BICArchives
     }
     $query .= " WHERE post_date AND post_status='publish' AND post_type='post' AND post_password=''" . $post_where;
     $query .= " ORDER BY post_date DESC";
+    if ($limit != -1)
+      $query .= " LIMIT " . $limit;
     $this->log($query);
     return $wpdb->get_results($query);
   }
   
-  function category_sql($cat_ids)
+  private function category_sql($cat_ids)
   {
     return ($cat_ids[0] == "-" ? "NOT " : "") . "IN (" . str_replace("-", "", $cat_ids) . ")";
   }
   
-  // Return a unique identifier that maps like archives to the same cache key.
-  function cache_id($cat_ids, $limit)
+  // Return a canonical identifier that maps similar archives to the same cache key.
+  private function cache_id($cat_ids, $limit, $dates, $comments)
   {
-    return "bic_archives_cat_" . $cat_ids . "_lim_" . $limit;
+    return "bic_archives_ca_" . $cat_ids . "_l_" . $limit . "_d_" . ($dates ? 1 : 0) .
+      "_co_" . ($comments ? 1 : 0);
   }
   
   // Save the generated HTML in the transient store.
-  function store_cache($cache_id, $html)
+  private function store_cache($cache_id, $html)
   {
     set_transient($cache_id, $html, self::ONE_DAY);
     $keys = get_transient(self::KEYS);
@@ -137,25 +181,14 @@ class BICArchives
   }
   
   // Delete an individual cached archive.
-  function drop_item($item, $key)
+  private function drop_item($item, $key)
   {
     $this->log("deleting " . $key);
     delete_transient($key);
   }
   
-  // Delete all the cached archives.
-  function drop_cache()
-  {
-    $this->log("deleting bic_archives");
-    $keys = get_transient(self::KEYS);
-    if (!$keys)
-      return;
-    array_walk($keys, array($this, 'drop_item'));
-    delete_transient(self::KEYS);
-  }
-  
   // Debug log
-  function log($msg)
+  private function log($msg)
   {
     error_log($msg, 0);
   }
