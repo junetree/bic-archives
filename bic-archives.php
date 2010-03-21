@@ -190,7 +190,7 @@ class BICArchives
   // Debug log
   private function log($msg)
   {
-    error_log($msg, 0);
+    //error_log($msg, 0);
   }
 
 }
