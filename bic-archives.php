@@ -164,8 +164,9 @@ class BICArchives
   // Return a canonical identifier that maps similar archives to the same cache key.
   private function cache_id($cat_ids, $limit, $dates, $comments)
   {
-    return "bic_archives_ca_" . $cat_ids . "_l_" . $limit . "_d_" . ($dates ? 1 : 0) .
-      "_co_" . ($comments ? 1 : 0);
+    // Wordpress limits the transient ids to 64 characters, so we need to compress using md5.
+    $cid = $cat_ids . "_l_" . $limit . "_d_" . ($dates ? 1 : 0) . "_co_" . ($comments ? 1 : 0);
+    return "bic_archives_" . md5($cid);
   }
   
   // Save the generated HTML in the transient store.
